@@ -22,6 +22,7 @@ import config
 from core.t212_client import T212Client
 from core.storage import Storage
 from core.telegram import Telegram
+from core.telegram_bot import TelegramBot
 from analysis.weekend_pipeline import WeekendAnalysisPipeline
 from analysis.earnings_executor import EarningsExecutor
 from strategies.manager import StrategyManager
@@ -55,6 +56,9 @@ class TradingBot:
         
         # Non-earnings strategies
         self.strategy_manager = StrategyManager(t212_client=self.t212)
+        
+        # Telegram command bot
+        self.telegram_bot = TelegramBot(trading_bot=self)
         
         self._running = False
     
@@ -129,6 +133,10 @@ class TradingBot:
             logger.error("Failed to connect to Trading212")
             return
         
+        # Start Telegram command listener
+        logger.info("Starting Telegram command listener...")
+        self.telegram_bot.start()
+        
         # Start news monitoring
         logger.info("Starting news monitoring...")
         self.strategy_manager.start_news_monitoring()
@@ -138,6 +146,11 @@ class TradingBot:
         
         try:
             while self._running:
+                # Check if paused via Telegram
+                if self.telegram_bot.is_paused:
+                    time.sleep(5)
+                    continue
+                
                 now = datetime.now()
                 today = now.strftime("%Y-%m-%d")
                 
@@ -171,6 +184,8 @@ class TradingBot:
             logger.error(f"Bot error: {e}")
             self.telegram.error("Bot Main Loop", str(e))
         finally:
+            # Stop telegram bot
+            self.telegram_bot.stop()
             # Stop news monitoring
             self.strategy_manager.stop_news_monitoring()
             self._running = False
