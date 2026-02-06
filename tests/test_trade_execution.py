@@ -93,8 +93,8 @@ def test_trade_execution(symbol: str = "AAPL", amount: float = 10.0, paper: bool
     print(f"   ✓ Current price: ${price:.2f}")
     
     # Calculate quantity
-    quantity = amount / price
-    print(f"   Order: {quantity:.6f} shares (${amount:.2f})")
+    quantity = round(amount / price, 2)  # Round to 2 decimal places for T212
+    print(f"   Order: {quantity:.2f} shares (${amount:.2f})")
     
     # Check existing position
     print(f"\n4. Checking for existing position...")

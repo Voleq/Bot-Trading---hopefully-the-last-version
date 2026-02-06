@@ -200,9 +200,17 @@ class TestSuite:
             
             if resp.status_code == 200:
                 data = resp.json()
-                result.success(f"Connected: {len(data)} earnings found")
+                if isinstance(data, dict) and "Error Message" in data:
+                    result.fail(f"API Error: {data.get('Error Message', 'Unknown')}")
+                else:
+                    result.success(f"Connected: {len(data)} earnings found")
+            elif resp.status_code == 401:
+                result.fail("HTTP 401 - Invalid API key. Check FMP_API_KEY in .env")
+                result.add_detail("Get a free API key at: https://financialmodelingprep.com/")
+            elif resp.status_code == 403:
+                result.fail("HTTP 403 - API key limit reached or invalid plan")
             else:
-                result.fail(f"HTTP {resp.status_code}")
+                result.fail(f"HTTP {resp.status_code}: {resp.text[:100]}")
                 
         except Exception as e:
             result.fail(str(e))
@@ -404,13 +412,20 @@ class TestSuite:
             
             result.add_detail(f"History: {len(hist)} days")
             
-            # Test earnings dates
-            earnings = ticker.earnings_dates
-            
-            if earnings is not None and not earnings.empty:
-                result.add_detail(f"Earnings dates: {len(earnings)}")
-            else:
-                result.add_detail("No earnings dates (may be normal)")
+            # Test earnings dates (may fail without lxml)
+            try:
+                earnings = ticker.earnings_dates
+                if earnings is not None and not earnings.empty:
+                    result.add_detail(f"Earnings dates: {len(earnings)}")
+                else:
+                    result.add_detail("No earnings dates (may be normal)")
+            except ImportError as e:
+                if "lxml" in str(e):
+                    result.add_detail("Earnings dates: requires lxml (pip install lxml)")
+                else:
+                    result.add_detail(f"Earnings dates: {e}")
+            except Exception as e:
+                result.add_detail(f"Earnings dates: skipped ({type(e).__name__})")
             
             # Test basic calculations
             returns = hist['Close'].pct_change()

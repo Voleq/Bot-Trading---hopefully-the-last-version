@@ -310,8 +310,15 @@ class T212Client:
             logger.error(f"Symbol not tradeable: {symbol}")
             return None
         
+        # Round quantity to 2 decimal places (T212 requirement)
+        quantity = round(abs(quantity), 2)
+        
+        if quantity < 0.01:
+            logger.error(f"Quantity too small: {quantity}")
+            return None
+        
         return self._request("POST", "/equity/orders/market", "market_order",
-                           data={"ticker": ticker, "quantity": abs(quantity)})
+                           data={"ticker": ticker, "quantity": quantity})
     
     def sell(self, symbol: str, quantity: float) -> Optional[Dict]:
         """Place sell order (negative quantity)."""
@@ -319,8 +326,15 @@ class T212Client:
         if not ticker:
             return None
         
+        # Round quantity to 2 decimal places (T212 requirement)
+        quantity = round(abs(quantity), 2)
+        
+        if quantity < 0.01:
+            logger.error(f"Quantity too small: {quantity}")
+            return None
+        
         return self._request("POST", "/equity/orders/market", "market_order",
-                           data={"ticker": ticker, "quantity": -abs(quantity)})
+                           data={"ticker": ticker, "quantity": -quantity})
     
     def close_position(self, symbol: str) -> Optional[Dict]:
         """Close entire position."""

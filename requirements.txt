@@ -10,6 +10,7 @@ pytz>=2023.3
 yfinance>=0.2.0
 pandas>=2.0.0
 numpy>=1.24.0
+lxml>=4.9.0
 
 # Database (optional - will fallback to JSON)
 pymongo>=4.0.0
@@ -26,4 +27,7 @@ pymongo>=4.0.0
 #
 # Execution Simulation:
 #   python -m tests.test_execution_simulation
+#
+# Trade Execution Test:
+#   python -m tests.test_trade_execution --status
 # ==========================

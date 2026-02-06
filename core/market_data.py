@@ -163,6 +163,7 @@ def get_earnings_dates(symbol: str) -> Optional[pd.DataFrame]:
         return None
     
     try:
+        import yfinance as yf
         ticker = yf.Ticker(symbol)
         earnings = ticker.earnings_dates
         
@@ -171,6 +172,10 @@ def get_earnings_dates(symbol: str) -> Optional[pd.DataFrame]:
         
         return earnings
         
+    except ImportError as e:
+        # lxml not installed
+        logger.debug(f"Earnings dates requires lxml: {e}")
+        return None
     except Exception:
         return None
 

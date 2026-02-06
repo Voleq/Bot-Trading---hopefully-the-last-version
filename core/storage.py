@@ -64,6 +64,11 @@ class Storage:
             except Exception as e:
                 logger.warning(f"MongoDB connection failed: {e}")
                 self.mongo_client = None
+                self.db = None
+    
+    def _has_mongo(self) -> bool:
+        """Check if MongoDB is available."""
+        return self.db is not None
     
     # ==================== WEEKLY UNIVERSE ====================
     
@@ -84,7 +89,7 @@ class Storage:
         }
         
         # Save to MongoDB
-        if self.db:
+        if self._has_mongo():
             try:
                 self.db.universe.replace_one(
                     {"week_id": week_id},
@@ -107,7 +112,7 @@ class Storage:
         week_id = week_id or get_week_id()
         
         # Try MongoDB first
-        if self.db:
+        if self._has_mongo():
             try:
                 data = self.db.universe.find_one({"week_id": week_id})
                 if data:
@@ -191,7 +196,7 @@ class Storage:
         }
         
         # Save to MongoDB for persistence
-        if self.db:
+        if self._has_mongo():
             try:
                 self.db.analysis.replace_one(
                     {"week_id": week_id},
@@ -214,7 +219,7 @@ class Storage:
         week_id = week_id or get_week_id()
         
         # Try MongoDB first
-        if self.db:
+        if self._has_mongo():
             try:
                 data = self.db.analysis.find_one({"week_id": week_id})
                 if data:
@@ -260,7 +265,7 @@ class Storage:
             json.dump(trades, f, indent=2)
         
         # Also save to MongoDB
-        if self.db:
+        if self._has_mongo():
             try:
                 self.db.trades.insert_one(trade.copy())
             except:
