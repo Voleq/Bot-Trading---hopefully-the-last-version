@@ -1,0 +1,29 @@
+# Trading Bot Requirements
+# ==========================
+
+# Core
+python-dotenv>=1.0.0
+requests>=2.28.0
+pytz>=2023.3
+
+# Data & Analysis
+yfinance>=0.2.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Database (optional - will fallback to JSON)
+pymongo>=4.0.0
+
+# ==========================
+# Installation:
+#   pip install -r requirements.txt
+#
+# Quick Test:
+#   python main.py --test
+#
+# Weekend Simulation:
+#   python -m tests.test_weekend_simulation --verbose
+#
+# Execution Simulation:
+#   python -m tests.test_execution_simulation
+# ==========================
