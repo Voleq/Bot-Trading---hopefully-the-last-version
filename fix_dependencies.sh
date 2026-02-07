@@ -1,86 +1,63 @@
 #!/bin/bash
-# fix_dependencies.sh - Fix numpy/pandas compatibility
-# 
-# ERROR: "module 'numpy' has no attribute '__version__'"
-# CAUSE: numpy 2.0 is not compatible with older pandas/yfinance
-# FIX: Install numpy 1.26.4
+# fix_dependencies.sh - Fix yfinance with browser session
+# Run: bash fix_dependencies.sh
 
-echo "============================================"
-echo "Fixing Trading Bot Dependencies"
-echo "============================================"
-echo ""
+echo "========================================"
+echo "TRADING BOT - DEPENDENCY FIX"
+echo "========================================"
 
-# Check if in venv
-if [ -z "$VIRTUAL_ENV" ]; then
-    echo "⚠️  Not in virtual environment!"
-    echo ""
-    echo "Run these commands first:"
-    echo "  python -m venv venv"
-    echo "  source venv/bin/activate"
-    echo ""
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+cd "$(dirname "$0")"
+
+# Activate or create venv
+if [ -d "venv" ]; then
+    source venv/bin/activate
+else
+    python3 -m venv venv
+    source venv/bin/activate
 fi
 
-echo "Step 1: Uninstalling ALL problematic packages..."
-pip uninstall numpy pandas yfinance lxml -y 2>/dev/null
+echo ""
+echo "Step 1: Uninstalling old packages..."
+pip uninstall numpy pandas yfinance requests-cache -y 2>/dev/null
 
 echo ""
-echo "Step 2: Clearing pip cache..."
-pip cache purge 2>/dev/null || true
+echo "Step 2: Installing correct versions..."
+pip install "numpy<2.0.0"
+pip install "pandas>=2.0.0"
+pip install "yfinance>=0.2.54"
+pip install "requests-cache>=1.2.0"
+pip install python-dotenv requests pytz lxml pymongo
 
 echo ""
-echo "Step 3: Installing EXACT working versions..."
-pip install --no-cache-dir \
-    numpy==1.26.4 \
-    pandas==2.1.4 \
-    yfinance==0.2.40 \
-    lxml==5.1.0 \
-    python-dotenv==1.0.1 \
-    requests==2.31.0 \
-    pytz==2024.1 \
-    pymongo==4.6.1
-
-echo ""
-echo "Step 4: Verifying installation..."
-echo ""
+echo "Step 3: Testing..."
 python3 << 'EOF'
-import sys
+import yfinance as yf
+import requests_cache
+from datetime import timedelta
+
+print(f"yfinance: {yf.__version__}")
+
+# Create session with browser headers
+session = requests_cache.CachedSession('yf_cache', expire_after=timedelta(minutes=1))
+session.headers['User-Agent'] = 'Mozilla/5.0 Chrome/120.0.0.0'
+
+# Test
+ticker = yf.Ticker('AAPL', session=session)
 try:
-    import numpy as np
-    import pandas as pd
-    import yfinance as yf
-    
-    print(f"✓ numpy:   {np.__version__}")
-    print(f"✓ pandas:  {pd.__version__}")
-    print(f"✓ yfinance: {yf.__version__}")
-    
-    # Quick test
-    ticker = yf.Ticker("AAPL")
-    hist = ticker.history(period="5d")
-    print(f"✓ yfinance working (got {len(hist)} days of AAPL data)")
-    
-    print("")
-    print("✅ ALL DEPENDENCIES WORKING!")
-    sys.exit(0)
+    price = ticker.fast_info.get('lastPrice')
+    if price:
+        print(f"AAPL: ${price:.2f} ✓")
+    else:
+        hist = ticker.history(period='5d')
+        print(f"AAPL: {len(hist)} rows ✓")
 except Exception as e:
-    print(f"❌ FAILED: {e}")
-    print("")
-    print("Try removing venv and starting fresh:")
-    print("  deactivate")
-    print("  rm -rf venv")
-    print("  python -m venv venv")
-    print("  source venv/bin/activate")
-    print("  pip install -r requirements.txt")
-    sys.exit(1)
+    print(f"Error: {e}")
+
+import os
+os.remove('yf_cache.sqlite') if os.path.exists('yf_cache.sqlite') else None
 EOF
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "============================================"
-    echo "Now run: python main.py --test"
-    echo "============================================"
-fi
+echo ""
+echo "========================================"
+echo "Done! Run: python check_setup.py"
+echo "========================================"

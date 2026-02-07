@@ -66,39 +66,53 @@ def check_pandas():
 
 
 def check_yfinance():
-    """Check yfinance."""
+    """Check yfinance with proper session."""
     print("\n4. Checking yfinance...")
     try:
         import yfinance as yf
         print(f"   ✓ yfinance {yf.__version__}")
         
-        # Quick functionality test with retries
-        symbols_to_try = ["AAPL", "MSFT", "SPY", "GOOGL"]
+        # Check if requests-cache is installed
+        try:
+            import requests_cache
+            print(f"   ✓ requests-cache installed")
+        except ImportError:
+            print(f"   ⚠ requests-cache not installed (recommended)")
+            print(f"     Run: pip install requests-cache")
         
-        for symbol in symbols_to_try:
+        # Test with browser session
+        from core.market_data import get_current_price, get_history
+        
+        symbols = ['AAPL', 'MSFT', 'SPY']
+        success = False
+        
+        for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="5d", timeout=10)
-                if len(hist) > 0:
-                    print(f"   ✓ yfinance API working ({symbol}: {len(hist)} rows)")
-                    return True
+                price = get_current_price(symbol)
+                if price and price > 0:
+                    print(f"   ✓ {symbol}: ${price:.2f}")
+                    success = True
+                    break
+                else:
+                    print(f"   - {symbol}: No price data")
             except Exception as e:
-                print(f"   - {symbol} failed: {str(e)[:50]}")
-                continue
+                print(f"   - {symbol}: {str(e)[:40]}")
         
-        # All symbols failed
-        print(f"   ⚠ yfinance API not responding (may be rate limited)")
-        print(f"   This is usually temporary - try again in a few minutes")
-        print(f"   Or your VPS IP may be blocked by Yahoo Finance")
-        return True  # Don't fail setup for this - it's often temporary
+        if success:
+            print(f"   ✓ yfinance API working")
+            return True
+        else:
+            print(f"   ⚠ yfinance not responding (may be rate limited)")
+            print(f"     Try: pip install --upgrade yfinance requests-cache")
+            return True  # Don't fail setup for temporary issues
         
-    except ImportError:
-        print("   ✗ yfinance not installed")
-        print("   Run: pip install yfinance==0.2.40")
+    except ImportError as e:
+        print(f"   ✗ Import error: {e}")
+        print("   Run: pip install yfinance>=0.2.54 requests-cache")
         return False
     except Exception as e:
         print(f"   ⚠ yfinance warning: {e}")
-        return True  # Don't fail for temporary issues
+        return True
 
 
 def check_other_packages():
