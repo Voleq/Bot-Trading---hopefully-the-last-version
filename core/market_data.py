@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 _yf = None
 _pd = None
 
+# Retry settings
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
 def _get_yf():
     """Lazy load yfinance."""
     global _yf
@@ -30,6 +34,24 @@ def _get_pd():
         import pandas
         _pd = pandas
     return _pd
+
+def _retry_yf_call(func, *args, **kwargs):
+    """Retry a yfinance call with exponential backoff."""
+    import time
+    last_error = None
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            result = func(*args, **kwargs)
+            return result
+        except Exception as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_DELAY * (attempt + 1)
+                logger.debug(f"yfinance retry {attempt + 1}/{MAX_RETRIES} after {delay}s: {e}")
+                time.sleep(delay)
+    
+    raise last_error
 
 # Cache of known bad symbols (don't retry)
 _bad_symbols: set = set()
@@ -80,13 +102,17 @@ def is_valid_symbol(symbol: str) -> bool:
     if symbol in _good_symbols:
         return True
     
-    # Try to validate
+    # Try to validate with retries
     try:
         yf = _get_yf()
         ticker = yf.Ticker(symbol)
-        hist = ticker.history(period="5d")
         
-        if hist.empty:
+        def fetch():
+            return ticker.history(period="5d", timeout=10)
+        
+        hist = _retry_yf_call(fetch)
+        
+        if hist is None or hist.empty:
             _bad_symbols.add(symbol)
             return False
         
@@ -127,10 +153,15 @@ def get_history(symbol: str, period: str = "1mo", validate: bool = True):
     try:
         yf = _get_yf()
         ticker = yf.Ticker(symbol)
-        hist = ticker.history(period=period)
         
-        if hist.empty:
-            _bad_symbols.add(symbol)
+        # Use retry logic
+        def fetch():
+            return ticker.history(period=period, timeout=10)
+        
+        hist = _retry_yf_call(fetch)
+        
+        if hist is None or hist.empty:
+            # Don't add to bad_symbols for temporary failures
             return None
         
         _good_symbols.add(symbol)
