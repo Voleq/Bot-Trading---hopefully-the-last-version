@@ -17,6 +17,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Check numpy version FIRST
+try:
+    import numpy as np
+    if int(np.__version__.split('.')[0]) >= 2:
+        print("ERROR: numpy 2.0+ is not supported!")
+        print("Run: pip uninstall numpy -y && pip install numpy==1.26.4")
+        sys.exit(1)
+except ImportError:
+    print("ERROR: numpy not installed. Run: pip install numpy==1.26.4")
+    sys.exit(1)
+
 import config
 from strategies import (
     SectorMomentumStrategy,

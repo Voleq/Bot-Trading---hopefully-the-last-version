@@ -34,11 +34,23 @@ A disciplined, multi-strategy trading system for Trading212 with real-time news 
 
 ```bash
 cd trading_bot
+
+# Create virtual environment (recommended)
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or: venv\Scripts\activate  # Windows
+
+# IMPORTANT: Run setup script to fix numpy compatibility
+chmod +x setup.sh
+./setup.sh
+
+# OR manually install:
+pip uninstall numpy -y
+pip install "numpy>=1.24.0,<2.0.0"
 pip install -r requirements.txt
 ```
+
+**⚠️ IMPORTANT:** numpy 2.0+ is NOT compatible with pandas/yfinance. You MUST use numpy < 2.0.
 
 ### 2. Configure
 
@@ -49,8 +61,7 @@ nano .env  # Add your API keys
 
 Required API keys:
 - `T212_API_KEY` - Trading212 API key
-- `T212_API_SECRET` - Trading212 API secret
-- `FMP_API_KEY` - Financial Modeling Prep (for earnings)
+- `FMP_API_KEY` - Financial Modeling Prep (for earnings) - Get free at https://financialmodelingprep.com/
 - `TELEGRAM_TOKEN` - Telegram bot token
 - `TELEGRAM_CHAT_ID` - Your Telegram chat ID
 

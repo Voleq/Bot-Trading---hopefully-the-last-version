@@ -24,9 +24,29 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Check dependencies first
+try:
+    import numpy as np
+    if int(np.__version__.split('.')[0]) >= 2:
+        print("ERROR: numpy 2.0+ is not supported!")
+        print("Run: pip uninstall numpy -y && pip install numpy==1.26.4")
+        sys.exit(1)
+except ImportError:
+    print("ERROR: numpy not installed")
+    print("Run: pip install numpy==1.26.4")
+    sys.exit(1)
+
 import config
 from core.t212_client import T212Client
-from core import market_data
+
+# Lazy import market_data to avoid issues
+_market_data = None
+def get_market_data():
+    global _market_data
+    if _market_data is None:
+        from core import market_data
+        _market_data = market_data
+    return _market_data
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -85,7 +105,7 @@ def test_trade_execution(symbol: str = "AAPL", amount: float = 10.0, paper: bool
     # Get current price
     print(f"\n3. Getting current price...")
     
-    price = market_data.get_current_price(symbol)
+    price = get_market_data().get_current_price(symbol)
     if not price:
         print("   ✗ Could not get price")
         return False

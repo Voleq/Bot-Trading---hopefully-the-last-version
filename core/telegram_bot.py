@@ -29,15 +29,43 @@ import logging
 import time
 import threading
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Any
 import requests
 
 import config
-from core.t212_client import T212Client, clean_symbol
-from core.storage import Storage
-from core import market_data
 
 logger = logging.getLogger(__name__)
+
+# Lazy imports to avoid circular dependencies
+_t212_client = None
+_storage = None
+_market_data = None
+
+def _get_t212_client():
+    global _t212_client
+    if _t212_client is None:
+        from core.t212_client import T212Client, clean_symbol
+        _t212_client = (T212Client, clean_symbol)
+    return _t212_client
+
+def _get_storage():
+    global _storage
+    if _storage is None:
+        from core.storage import Storage
+        _storage = Storage
+    return _storage
+
+def _get_market_data():
+    global _market_data
+    if _market_data is None:
+        from core import market_data
+        _market_data = market_data
+    return _market_data
+
+def _clean_symbol(symbol: str) -> str:
+    """Helper to clean symbol using t212_client."""
+    _, clean_fn = _get_t212_client()
+    return clean_fn(symbol)
 
 
 class TelegramBot:
@@ -45,10 +73,13 @@ class TelegramBot:
     Telegram bot that listens for commands.
     """
     
-    def __init__(self, t212_client: T212Client = None, trading_bot = None):
+    def __init__(self, t212_client=None, trading_bot=None):
         self.token = config.TELEGRAM_TOKEN
         self.chat_id = config.TELEGRAM_CHAT_ID
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+        
+        T212Client, _ = _get_t212_client()
+        Storage = _get_storage()
         
         # Can pass either t212_client directly or get it from trading_bot
         if trading_bot:
@@ -357,7 +388,7 @@ Total: {account.currency} {account.total_value:,.2f}
             self.send("❌ Usage: /buy SYMBOL [AMOUNT]\nExample: /buy AAPL 100")
             return
         
-        symbol = clean_symbol(args[0])
+        symbol = _clean_symbol(args[0])
         amount = float(args[1]) if len(args) > 1 else 50  # Default $50
         
         if not symbol:
@@ -366,7 +397,7 @@ Total: {account.currency} {account.total_value:,.2f}
         
         try:
             # Get price
-            price = market_data.get_current_price(symbol)
+            price = _get_market_data().get_current_price(symbol)
             if not price:
                 self.send(f"❌ Cannot get price for {symbol}")
                 return
@@ -410,7 +441,7 @@ Total: {account.currency} {account.total_value:,.2f}
             self.send("❌ Usage: /sell SYMBOL [QUANTITY]\nExample: /sell AAPL 0.5")
             return
         
-        symbol = clean_symbol(args[0])
+        symbol = _clean_symbol(args[0])
         
         if not symbol:
             self.send("❌ Invalid symbol")
@@ -452,7 +483,7 @@ Total: {account.currency} {account.total_value:,.2f}
             self.send("❌ Usage: /close SYMBOL")
             return
         
-        symbol = clean_symbol(args[0])
+        symbol = _clean_symbol(args[0])
         
         try:
             position = self.t212.get_position(symbol)
@@ -514,14 +545,14 @@ Total: {account.currency} {account.total_value:,.2f}
             self.send("❌ Usage: /analyze SYMBOL")
             return
         
-        symbol = clean_symbol(args[0])
+        symbol = _clean_symbol(args[0])
         
         try:
             self.send(f"🔍 Analyzing {symbol}...")
             
             # Get data
-            info = market_data.get_info(symbol)
-            hist = market_data.get_history(symbol, period="1mo")
+            info = _get_market_data().get_info(symbol)
+            hist = _get_market_data().get_history(symbol, period="1mo")
             
             if not info or hist is None:
                 self.send(f"❌ Cannot get data for {symbol}")
@@ -566,10 +597,10 @@ Avg Volume: {info.get('averageVolume', 0):,.0f}
             self.send("❌ Usage: /news SYMBOL")
             return
         
-        symbol = clean_symbol(args[0])
+        symbol = _clean_symbol(args[0])
         
         try:
-            news = market_data.get_news(symbol, max_items=5)
+            news = _get_market_data().get_news(symbol, max_items=5)
             
             if not news:
                 self.send(f"📭 No recent news for {symbol}")

@@ -1,33 +1,34 @@
 # Trading Bot Requirements
 # ==========================
+# IMPORTANT: These versions are tested and work together
+# numpy 2.0 breaks pandas compatibility!
+# ==========================
 
 # Core
-python-dotenv>=1.0.0
-requests>=2.28.0
-pytz>=2023.3
+python-dotenv==1.0.1
+requests==2.31.0
+pytz==2024.1
 
-# Data & Analysis
-yfinance>=0.2.0
-pandas>=2.0.0
-numpy>=1.24.0
-lxml>=4.9.0
+# Data & Analysis - EXACT versions (DO NOT CHANGE!)
+numpy==1.26.4
+pandas==2.1.4
+yfinance==0.2.40
+lxml==5.1.0
 
-# Database (optional - will fallback to JSON)
-pymongo>=4.0.0
+# Database (optional)
+pymongo==4.6.1
 
 # ==========================
-# Installation:
+# INSTALLATION:
+#
+# First time:
+#   python -m venv venv
+#   source venv/bin/activate  # Linux/Mac
 #   pip install -r requirements.txt
 #
-# Quick Test:
-#   python main.py --test
+# If you get numpy errors:
+#   bash fix_dependencies.sh
 #
-# Weekend Simulation:
-#   python -m tests.test_weekend_simulation --verbose
-#
-# Execution Simulation:
-#   python -m tests.test_execution_simulation
-#
-# Trade Execution Test:
-#   python -m tests.test_trade_execution --status
+# Verify with:
+#   python check_env.py
 # ==========================

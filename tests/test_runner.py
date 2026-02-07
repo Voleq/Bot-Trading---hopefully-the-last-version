@@ -21,6 +21,29 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Check numpy version FIRST - before any other imports
+def _check_numpy():
+    try:
+        import numpy as np
+        if int(np.__version__.split('.')[0]) >= 2:
+            print("=" * 60)
+            print("ERROR: numpy 2.0+ is not supported!")
+            print("=" * 60)
+            print(f"Current version: {np.__version__}")
+            print()
+            print("Fix with:")
+            print("  pip uninstall numpy pandas yfinance -y")
+            print("  pip install numpy==1.26.4 pandas==2.1.4 yfinance==0.2.40")
+            print("=" * 60)
+            return False
+        return True
+    except ImportError:
+        print("ERROR: numpy not installed")
+        return False
+
+if not _check_numpy():
+    sys.exit(1)
+
 import config
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
