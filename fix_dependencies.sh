@@ -1,9 +1,9 @@
 #!/bin/bash
-# fix_dependencies.sh - Fix yfinance with browser session
+# fix_dependencies.sh - Install/fix all trading bot dependencies
 # Run: bash fix_dependencies.sh
 
 echo "========================================"
-echo "TRADING BOT - DEPENDENCY FIX"
+echo "TRADING BOT - DEPENDENCY SETUP"
 echo "========================================"
 
 cd "$(dirname "$0")"
@@ -12,49 +12,55 @@ cd "$(dirname "$0")"
 if [ -d "venv" ]; then
     source venv/bin/activate
 else
+    echo "Creating virtual environment..."
     python3 -m venv venv
     source venv/bin/activate
 fi
 
 echo ""
-echo "Step 1: Uninstalling old packages..."
-pip uninstall numpy pandas yfinance requests-cache -y 2>/dev/null
+echo "Step 1: Installing dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
 
 echo ""
-echo "Step 2: Installing correct versions..."
-pip install "numpy<2.0.0"
-pip install "pandas>=2.0.0"
-pip install "yfinance>=0.2.54"
-pip install "requests-cache>=1.2.0"
-pip install python-dotenv requests pytz lxml pymongo
-
-echo ""
-echo "Step 3: Testing..."
+echo "Step 2: Testing Yahoo Finance API..."
 python3 << 'EOF'
-import yfinance as yf
-import requests_cache
-from datetime import timedelta
+import requests
+import pandas as pd
+import numpy as np
 
-print(f"yfinance: {yf.__version__}")
+print(f"numpy:    {np.__version__}")
+print(f"pandas:   {pd.__version__}")
+print(f"requests: {requests.__version__}")
+print()
 
-# Create session with browser headers
-session = requests_cache.CachedSession('yf_cache', expire_after=timedelta(minutes=1))
-session.headers['User-Agent'] = 'Mozilla/5.0 Chrome/120.0.0.0'
+# Test Yahoo Finance direct API
+session = requests.Session()
+session.headers["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
-# Test
-ticker = yf.Ticker('AAPL', session=session)
+# Get crumb
 try:
-    price = ticker.fast_info.get('lastPrice')
-    if price:
-        print(f"AAPL: ${price:.2f} ✓")
-    else:
-        hist = ticker.history(period='5d')
-        print(f"AAPL: {len(hist)} rows ✓")
-except Exception as e:
-    print(f"Error: {e}")
+    session.get("https://fc.yahoo.com", timeout=10, allow_redirects=True)
+except:
+    pass
 
-import os
-os.remove('yf_cache.sqlite') if os.path.exists('yf_cache.sqlite') else None
+resp = session.get(
+    "https://query1.finance.yahoo.com/v8/finance/chart/AAPL",
+    params={"range": "5d", "interval": "1d"},
+    timeout=10
+)
+
+if resp.status_code == 200:
+    data = resp.json()
+    result = data.get("chart", {}).get("result", [{}])[0]
+    meta = result.get("meta", {})
+    price = meta.get("regularMarketPrice")
+    if price:
+        print(f"✓ AAPL: ${price:.2f}")
+    timestamps = result.get("timestamp", [])
+    print(f"✓ Got {len(timestamps)} data points")
+else:
+    print(f"✗ HTTP {resp.status_code}")
 EOF
 
 echo ""

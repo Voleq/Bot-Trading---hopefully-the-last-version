@@ -18,28 +18,25 @@ def check_environment():
     """Check dependencies before importing anything else."""
     errors = []
     
-    # Check numpy FIRST - this is the critical one
+    # Check numpy
     try:
         import numpy as np
-        np_major = int(np.__version__.split('.')[0])
-        if np_major >= 2:
-            errors.append(f"numpy {np.__version__} detected - need version <2.0")
     except ImportError:
         errors.append("numpy not installed")
-    except AttributeError:
-        # This is the actual error with numpy 2.0 + old pandas
-        errors.append("numpy/pandas version mismatch detected")
     
     # Check pandas
     try:
         import pandas
     except ImportError:
         errors.append("pandas not installed")
-    except AttributeError as e:
-        if "__version__" in str(e):
-            errors.append("pandas incompatible with numpy 2.0")
-        else:
-            errors.append(f"pandas error: {e}")
+    except Exception as e:
+        errors.append(f"pandas error: {e}")
+    
+    # Check requests
+    try:
+        import requests
+    except ImportError:
+        errors.append("requests not installed")
     
     if errors:
         print("=" * 60)

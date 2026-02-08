@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def clean_symbol(symbol: str) -> str:
     """
-    Clean stock symbol for yfinance compatibility.
+    Clean stock symbol for Yahoo Finance compatibility.
     
     Handles:
     - $ prefix ($AAPL -> AAPL)
@@ -73,25 +73,17 @@ def clean_symbol(symbol: str) -> str:
 
 def validate_symbol(symbol: str) -> bool:
     """
-    Validate that symbol exists on yfinance.
-    Quick check without full data download.
+    Validate that symbol exists on Yahoo Finance.
+    Quick check via market_data module.
     """
     symbol = clean_symbol(symbol)
     if not symbol:
         return False
     
     try:
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        # Quick check - just get info
-        info = ticker.info
-        # If we get a valid response with a price, it's valid
-        if info and info.get('regularMarketPrice'):
-            return True
-        if info and info.get('currentPrice'):
-            return True
-        return False
-    except:
+        from core import market_data
+        return market_data.is_valid_symbol(symbol)
+    except Exception:
         return False
 
 

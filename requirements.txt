@@ -7,10 +7,10 @@ requests>=2.31.0
 pytz>=2024.1
 
 # Data & Analysis
-yfinance>=0.2.54
-requests-cache>=1.2.0
+# NOTE: yfinance REMOVED - market_data.py uses Yahoo Finance REST API directly
+#       This eliminates all yfinance/numpy version compatibility issues
 pandas>=2.0.0
-numpy<2.0.0
+numpy>=1.24.0
 lxml>=5.1.0
 
 # Database (optional)
@@ -19,7 +19,4 @@ pymongo>=4.6.1
 # ==========================
 # INSTALLATION:
 #   pip install -r requirements.txt
-#
-# If yfinance fails, update it:
-#   pip install --upgrade yfinance requests-cache
 # ==========================

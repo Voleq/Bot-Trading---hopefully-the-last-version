@@ -65,28 +65,27 @@ class ExecutionSimulation:
         
         symbols = [self.test_symbol] if self.test_symbol else ["AAPL", "TSLA", "NVDA", "GME", "AMC"]
         
-        import yfinance as yf
+        from core import market_data
         
         for symbol in symbols:
             print(f"\n{symbol}:")
             
             try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info or {}
-                hist = ticker.history(period="5d")
+                info = market_data.get_info(symbol) or {}
+                hist = market_data.get_history(symbol, period="5d")
                 
                 # Volume check
-                avg_vol = info.get("averageVolume", 0)
+                avg_vol = info.get("averageVolume", 0) or 0
                 vol_ok = avg_vol >= config.NO_TRADE_RULES["min_avg_volume"]
                 print(f"  Volume: {avg_vol:,.0f} {'✓' if vol_ok else '✗ (min: ' + str(config.NO_TRADE_RULES['min_avg_volume']) + ')'}")
                 
                 # Market cap check
-                mkt_cap = info.get("marketCap", 0)
+                mkt_cap = info.get("marketCap", 0) or 0
                 cap_ok = mkt_cap >= config.NO_TRADE_RULES["min_market_cap"]
                 print(f"  Market Cap: ${mkt_cap/1e9:.1f}B {'✓' if cap_ok else '✗'}")
                 
                 # Gap check
-                if len(hist) >= 2:
+                if hist is not None and len(hist) >= 2:
                     prev_close = hist['Close'].iloc[-2]
                     current = hist['Close'].iloc[-1]
                     gap_pct = ((current - prev_close) / prev_close) * 100
@@ -183,10 +182,8 @@ class ExecutionSimulation:
         # Example trade
         print(f"\nExample: Buy AAPL with score 4")
         
-        import yfinance as yf
-        ticker = yf.Ticker("AAPL")
-        hist = ticker.history(period="1d")
-        price = hist['Close'].iloc[-1] if not hist.empty else 180
+        from core import market_data
+        price = market_data.get_current_price("AAPL") or 180
         
         size = base_size * config.POSITION_SIZE_BY_SCORE[4]
         shares = size / price

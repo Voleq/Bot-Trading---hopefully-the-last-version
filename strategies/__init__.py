@@ -8,10 +8,12 @@ SWING STRATEGIES (Pre-market scan at 9:00 AM):
 2. Mean Reversion - Buy oversold quality stocks  
 3. Breakout - Buy new 52-week highs
 4. Gap Fade - Fade overnight gaps
+5. RSI Divergence - Detect price/RSI divergences
+6. Volume Spike - Catch unusual volume surges
 
 INTRADAY STRATEGIES (Scan at 10:00 AM):
-5. VWAP Reversion - Buy below VWAP
-6. ORB - Opening Range Breakout
+7. VWAP Reversion - Buy below VWAP
+8. ORB - Opening Range Breakout
 
 All strategies follow the same interface:
 - analyze(): Weekend analysis
@@ -26,6 +28,8 @@ from strategies.sector_momentum import SectorMomentumStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.intraday import GapFadeStrategy, VWAPReversionStrategy, OpeningRangeBreakoutStrategy
+from strategies.rsi_divergence import RSIDivergenceStrategy
+from strategies.volume_spike import VolumeSpikeStrategy
 from strategies.manager import StrategyManager
 
 __all__ = [
@@ -39,5 +43,7 @@ __all__ = [
     "GapFadeStrategy",
     "VWAPReversionStrategy",
     "OpeningRangeBreakoutStrategy",
+    "RSIDivergenceStrategy",
+    "VolumeSpikeStrategy",
     "StrategyManager",
 ]

@@ -40,17 +40,15 @@ python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or: venv\Scripts\activate  # Windows
 
-# IMPORTANT: Run setup script to fix numpy compatibility
-chmod +x setup.sh
-./setup.sh
-
-# OR manually install:
-pip uninstall numpy -y
-pip install "numpy>=1.24.0,<2.0.0"
+# Install dependencies
 pip install -r requirements.txt
+
+# OR use setup script:
+chmod +x fix_dependencies.sh
+./fix_dependencies.sh
 ```
 
-**⚠️ IMPORTANT:** numpy 2.0+ is NOT compatible with pandas/yfinance. You MUST use numpy < 2.0.
+**NOTE:** This bot uses Yahoo Finance's REST API directly (no yfinance library needed). This avoids all numpy/yfinance compatibility issues.
 
 ### 2. Configure
 
@@ -348,7 +346,7 @@ trading_bot/
 │
 ├── core/
 │   ├── t212_client.py         # Trading212 API client
-│   ├── market_data.py         # Safe yfinance wrapper
+│   ├── market_data.py         # Yahoo Finance REST API wrapper (no yfinance)
 │   ├── telegram.py            # Telegram notifications
 │   ├── storage.py             # MongoDB + JSON storage
 │   └── news_monitor.py        # Real-time news monitoring
@@ -590,7 +588,7 @@ Action: Review position immediately
 ### "News monitor not working"
 
 1. Check internet connection
-2. yfinance may be rate-limited
+2. Yahoo Finance API may be rate-limited (wait a few minutes)
 3. FMP API may be down
 
 ### "Telegram not sending"

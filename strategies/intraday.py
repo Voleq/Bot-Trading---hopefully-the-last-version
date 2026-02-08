@@ -159,10 +159,9 @@ class GapFadeStrategy(BaseStrategy):
         }
     
     def _save_analysis(self, results: List[Dict], week_id: str):
-        import json
+        from core.utils import safe_json_dump
         filepath = config.DATA_DIR / f"gap_fade_{week_id}.json"
-        with open(filepath, 'w') as f:
-            json.dump({"results": results}, f, indent=2)
+        safe_json_dump({"results": results}, filepath)
     
     def _load_analysis(self) -> Dict[str, Dict]:
         week_id = get_week_id()

@@ -225,7 +225,7 @@ class SectorMomentumStrategy(BaseStrategy):
         """Save analysis results."""
         filepath = config.DATA_DIR / f"sector_momentum_{week_id}.json"
         
-        import json
+        from core.utils import safe_json_dump
         data = {
             "week_id": week_id,
             "strategy": self.name,
@@ -233,8 +233,7 @@ class SectorMomentumStrategy(BaseStrategy):
             "results": results
         }
         
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+        safe_json_dump(data, filepath)
         
         logger.info(f"[{self.name}] Analysis saved to {filepath}")
     

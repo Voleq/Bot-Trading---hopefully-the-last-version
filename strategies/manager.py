@@ -34,6 +34,8 @@ from strategies.sector_momentum import SectorMomentumStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.breakout import BreakoutStrategy
 from strategies.intraday import GapFadeStrategy, VWAPReversionStrategy, OpeningRangeBreakoutStrategy
+from strategies.rsi_divergence import RSIDivergenceStrategy
+from strategies.volume_spike import VolumeSpikeStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +75,18 @@ class StrategyManager:
             # Intraday strategies (10:00 AM)
             "vwap_reversion": VWAPReversionStrategy(),
             "orb": OpeningRangeBreakoutStrategy(),
+            
+            # Swing strategies (9:00 AM)
+            "rsi_divergence": RSIDivergenceStrategy(),
+            "volume_spike": VolumeSpikeStrategy(),
         }
         
         # Update check times to pre-market for swing strategies
         self.strategies["sector_momentum"].config.check_time = time(9, 0)
         self.strategies["mean_reversion"].config.check_time = time(9, 0)
         self.strategies["breakout"].config.check_time = time(9, 0)
+        self.strategies["rsi_divergence"].config.check_time = time(9, 0)
+        self.strategies["volume_spike"].config.check_time = time(9, 0)
         
         # Track which strategies have been scanned today
         self._scanned_today: Dict[str, str] = {}  # strategy -> date
@@ -264,9 +272,8 @@ class StrategyManager:
         }
         
         filepath = config.DATA_DIR / "strategy_positions.json"
-        import json
-        with open(filepath, 'w') as f:
-            json.dump(positions, f, indent=2)
+        from core.utils import safe_json_dump
+        safe_json_dump(positions, filepath)
     
     def remove_strategy_position(self, symbol: str):
         """Remove a strategy position after closing."""
@@ -274,9 +281,8 @@ class StrategyManager:
         positions.pop(symbol, None)
         
         filepath = config.DATA_DIR / "strategy_positions.json"
-        import json
-        with open(filepath, 'w') as f:
-            json.dump(positions, f, indent=2)
+        from core.utils import safe_json_dump
+        safe_json_dump(positions, filepath)
     
     # ==================== EXECUTION ====================
     
@@ -517,8 +523,8 @@ if __name__ == "__main__":
             signals = manager.run_daily_scans()
             print(f"\nGenerated {len(signals)} total signals")
         elif cmd == "status":
-            import json
-            print(json.dumps(manager.get_status(), indent=2))
+            from core.utils import safe_json_dumps
+            print(safe_json_dumps(manager.get_status()))
         elif cmd == "check":
             to_close = manager.check_all_invalidations()
             print(f"\n{len(to_close)} positions to close")

@@ -180,16 +180,15 @@ class MeanReversionStrategy(BaseStrategy):
     
     def _save_analysis(self, results: List[Dict], week_id: str):
         """Save analysis results."""
-        import json
+        from core.utils import safe_json_dump
         filepath = config.DATA_DIR / f"mean_reversion_{week_id}.json"
         
-        with open(filepath, 'w') as f:
-            json.dump({
-                "week_id": week_id,
-                "strategy": self.name,
-                "analyzed_at": datetime.now().isoformat(),
-                "results": results
-            }, f, indent=2)
+        safe_json_dump({
+            "week_id": week_id,
+            "strategy": self.name,
+            "analyzed_at": datetime.now().isoformat(),
+            "results": results
+        }, filepath)
     
     def _load_analysis(self, week_id: str = None) -> Dict[str, Dict]:
         """Load precomputed analysis as dict by symbol."""

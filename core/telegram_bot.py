@@ -115,6 +115,15 @@ class TelegramBot:
             "analyze": self._cmd_analyze,
             "news": self._cmd_news,
             "universe": self._cmd_universe,
+            # New commands
+            "price": self._cmd_price,
+            "scan": self._cmd_scan,
+            "weeklyrun": self._cmd_weeklyrun,
+            "earnings": self._cmd_earnings,
+            "performance": self._cmd_performance,
+            "watchlist": self._cmd_watchlist,
+            "top": self._cmd_top,
+            "sectors": self._cmd_sectors,
         }
         
         logger.info("Telegram bot initialized")
@@ -217,6 +226,7 @@ class TelegramBot:
 /positions - Open positions
 /balance - Account balance
 /trades - Today's trades
+/performance - Portfolio P&L summary
 
 <b>📈 Trading</b>
 /buy SYMBOL [AMOUNT] - Buy stock
@@ -225,20 +235,34 @@ class TelegramBot:
 /closeall - Close all positions
 
 <b>🔍 Analysis</b>
-/analyze SYMBOL - Analyze stock
-/news SYMBOL - Recent news
+/analyze SYMBOL - Full stock analysis
+/news SYMBOL - News report with sentiment
+/price SYMBOL - Quick price check
 /signals - Current signals
-/universe - T212 universe stats
+/earnings - Upcoming earnings this week
+/sectors - Sector momentum rankings
+/top - Top signals from last scan
+
+<b>🔄 Scans</b>
+/scan - Run daily strategy scans
+/weeklyrun - Run full weekend analysis
+
+<b>📡 Watchlist</b>
+/watchlist - Show watchlist
+/watchlist add SYMBOL - Add to watchlist
+/watchlist remove SYMBOL - Remove from watchlist
 
 <b>⚙️ Control</b>
 /pause - Pause auto-trading
 /resume - Resume auto-trading
+/universe - T212 universe stats
 /help - This message
 
 <b>Examples:</b>
 <code>/buy AAPL 100</code> - Buy $100 of AAPL
-<code>/sell AAPL 0.5</code> - Sell 0.5 shares
-<code>/analyze TSLA</code> - Analyze Tesla
+<code>/news TSLA</code> - Full news report
+<code>/price NVDA</code> - Quick price
+<code>/watchlist add MSFT</code> - Watch MSFT
 """
         self.send(help_text)
     
@@ -592,26 +616,59 @@ Avg Volume: {info.get('averageVolume', 0):,.0f}
             self.send(f"❌ Error: {e}")
     
     def _cmd_news(self, args):
-        """Get recent news."""
+        """Get comprehensive news report with sentiment analysis."""
         if not args:
             self.send("❌ Usage: /news SYMBOL")
             return
         
         symbol = _clean_symbol(args[0])
+        self.send(f"🔍 Fetching news for {symbol}...")
         
         try:
-            news = _get_market_data().get_news(symbol, max_items=5)
+            from core.news_monitor import NewsMonitor
+            monitor = NewsMonitor()
+            report = monitor.get_full_news_report(symbol)
             
-            if not news:
+            if report["count"] == 0:
                 self.send(f"📭 No recent news for {symbol}")
                 return
             
-            msg = f"📰 <b>{symbol} News</b>\n\n"
+            # Build message
+            signal_emoji = {
+                "BULLISH": "🟢", "BEARISH": "🔴",
+                "NEUTRAL": "🟡", "MIXED": "🔵", "NO_DATA": "⚪"
+            }
             
-            for item in news:
-                title = item.get("title", "")[:100]
-                publisher = item.get("publisher", "Unknown")
-                msg += f"• {title}\n  <i>{publisher}</i>\n\n"
+            emoji = signal_emoji.get(report["signal"], "⚪")
+            
+            msg = f"📰 <b>{symbol} News Report</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"{emoji} Signal: <b>{report['signal']}</b>\n"
+            msg += f"📊 Sentiment: {report['sentiment']:+.2f}\n"
+            msg += f"✅ Positive: {report['positive']} | ❌ Negative: {report['negative']}\n"
+            msg += f"📄 Total: {report['count']} headlines\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            # Show top headlines with sentiment
+            for item in report["headlines"][:10]:
+                score = item["score"]
+                if score > 0.2:
+                    icon = "🟢"
+                elif score < -0.2:
+                    icon = "🔴"
+                else:
+                    icon = "⚪"
+                
+                title = item["title"][:90]
+                msg += f"{icon} {title}\n"
+                msg += f"   <i>{item['source']} • {item['time']}</i>\n"
+                if item["summary"] and score != 0:
+                    msg += f"   💡 {item['summary'][:80]}\n"
+                msg += "\n"
+            
+            # Trim if too long for Telegram
+            if len(msg) > 4000:
+                msg = msg[:3950] + "\n\n... (truncated)"
             
             self.send(msg)
             
@@ -630,6 +687,347 @@ Total Instruments: {len(instruments)}
 
 Use /analyze SYMBOL to check a stock.
 """
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    # ==================== NEW COMMANDS ====================
+    
+    def _cmd_price(self, args):
+        """Quick price check for a symbol."""
+        if not args:
+            self.send("❌ Usage: /price SYMBOL")
+            return
+        
+        symbol = _clean_symbol(args[0])
+        
+        try:
+            md = _get_market_data()
+            price = md.get_current_price(symbol)
+            
+            if price is None:
+                self.send(f"❌ No price data for {symbol}")
+                return
+            
+            # Try to get change info
+            info = md.get_info(symbol)
+            
+            msg = f"💰 <b>{symbol}</b>: ${price:.2f}"
+            
+            if info:
+                change = info.get("regularMarketChange")
+                change_pct = info.get("regularMarketChangePercent")
+                name = info.get("shortName", "")
+                
+                if name:
+                    msg = f"💰 <b>{symbol}</b> ({name})\n"
+                    msg += f"Price: <b>${price:.2f}</b>"
+                
+                if change is not None and change_pct is not None:
+                    emoji = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                    msg += f"\n{emoji} {change:+.2f} ({change_pct:+.2f}%)"
+                
+                vol = info.get("volume")
+                avg_vol = info.get("averageVolume")
+                if vol:
+                    msg += f"\n📊 Volume: {vol:,.0f}"
+                    if avg_vol and avg_vol > 0:
+                        vol_ratio = vol / avg_vol
+                        if vol_ratio > 1.5:
+                            msg += f" ⚡ ({vol_ratio:.1f}x avg)"
+                
+                high52 = info.get("fiftyTwoWeekHigh")
+                low52 = info.get("fiftyTwoWeekLow")
+                if high52 and low52:
+                    pct_from_high = (price / high52 - 1) * 100
+                    msg += f"\n52W: ${low52:.2f} - ${high52:.2f} ({pct_from_high:+.1f}% from high)"
+            
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    def _cmd_scan(self, args):
+        """Run daily strategy scans."""
+        self.send("🔄 Running daily scans...")
+        
+        try:
+            from strategies.manager import StrategyManager
+            manager = StrategyManager(t212_client=self.t212)
+            signals = manager.run_daily_scans()
+            
+            if not signals:
+                self.send("📭 No signals generated from daily scan.")
+                return
+            
+            msg = f"📡 <b>Daily Scan Results</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"Total signals: {len(signals)}\n\n"
+            
+            for sig in signals[:15]:
+                emoji = "🟢" if sig.signal_type.value == "BUY" else "🔴"
+                msg += f"{emoji} <b>{sig.symbol}</b> ({sig.strategy})\n"
+                msg += f"   Score: {sig.score:.1f} | {sig.reason[:60]}\n"
+            
+            if len(signals) > 15:
+                msg += f"\n... and {len(signals) - 15} more"
+            
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Scan failed: {e}")
+    
+    def _cmd_weeklyrun(self, args):
+        """Trigger full weekend analysis pipeline."""
+        self.send("🔬 Starting weekend analysis pipeline...\nThis may take several minutes.")
+        
+        try:
+            import threading
+            
+            def _run():
+                try:
+                    from analysis.weekend_pipeline import WeekendAnalysisPipeline
+                    from strategies.manager import StrategyManager
+                    
+                    # Run earnings pipeline
+                    pipeline = WeekendAnalysisPipeline()
+                    pipeline.run()
+                    
+                    # Run strategy weekend analysis
+                    manager = StrategyManager(t212_client=self.t212)
+                    manager.run_weekend_analysis()
+                    
+                    self.send("✅ Weekend analysis complete! Check /signals and /earnings for results.")
+                except Exception as e:
+                    self.send(f"❌ Weekend analysis failed: {e}")
+            
+            thread = threading.Thread(target=_run, daemon=True)
+            thread.start()
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    def _cmd_earnings(self, args):
+        """Show upcoming earnings this week."""
+        try:
+            Storage = _get_storage()
+            storage = Storage()
+            
+            candidates = storage.get_earnings_candidates()
+            
+            if not candidates:
+                self.send("📭 No earnings candidates loaded. Run /weeklyrun first.")
+                return
+            
+            msg = f"📅 <b>Upcoming Earnings</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"Total: {len(candidates)} stocks\n\n"
+            
+            # Group by date
+            by_date = {}
+            for c in candidates:
+                date = c.get("date", "unknown")
+                by_date.setdefault(date, []).append(c)
+            
+            for date in sorted(by_date.keys()):
+                msg += f"📆 <b>{date}</b>\n"
+                for c in by_date[date][:10]:
+                    time_str = c.get("time", "?")
+                    eps = c.get("eps_estimate")
+                    eps_str = f"EPS est: {eps}" if eps else ""
+                    msg += f"  • {c['symbol']} ({time_str}) {eps_str}\n"
+                if len(by_date[date]) > 10:
+                    msg += f"  ... and {len(by_date[date]) - 10} more\n"
+                msg += "\n"
+            
+            if len(msg) > 4000:
+                msg = msg[:3950] + "\n... (truncated)"
+            
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    def _cmd_performance(self, args):
+        """Show portfolio performance summary."""
+        try:
+            positions = self.t212.get_positions()
+            account = self.t212.get_account()
+            
+            if not positions:
+                cash = account.get("cash", 0) if isinstance(account, dict) else 0
+                self.send(f"📊 No open positions.\n💵 Cash: ${cash:,.2f}")
+                return
+            
+            total_value = 0
+            total_pnl = 0
+            winners = 0
+            losers = 0
+            
+            msg = f"📊 <b>Portfolio Performance</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            for pos in positions:
+                pnl = pos.pnl if hasattr(pos, 'pnl') else 0
+                pnl_pct = pos.pnl_pct if hasattr(pos, 'pnl_pct') else 0
+                value = pos.current_value if hasattr(pos, 'current_value') else 0
+                
+                total_value += value
+                total_pnl += pnl
+                
+                if pnl > 0:
+                    winners += 1
+                    emoji = "🟢"
+                elif pnl < 0:
+                    losers += 1
+                    emoji = "🔴"
+                else:
+                    emoji = "⚪"
+                
+                msg += f"{emoji} <b>{pos.ticker}</b>: {pnl:+.2f} ({pnl_pct:+.1f}%)\n"
+            
+            msg += f"\n━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"💰 Total Value: ${total_value:,.2f}\n"
+            
+            pnl_emoji = "📈" if total_pnl > 0 else "📉"
+            msg += f"{pnl_emoji} Total P&L: {total_pnl:+.2f}\n"
+            msg += f"✅ Winners: {winners} | ❌ Losers: {losers}\n"
+            
+            if winners + losers > 0:
+                win_rate = winners / (winners + losers) * 100
+                msg += f"📊 Win Rate: {win_rate:.0f}%"
+            
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    def _cmd_watchlist(self, args):
+        """Manage news watchlist."""
+        from core.news_monitor import NewsMonitor
+        
+        # Persist watchlist in storage
+        Storage = _get_storage()
+        storage = Storage()
+        
+        if not args:
+            # Show current watchlist
+            try:
+                wl = storage.get_watchlist()
+                if not wl:
+                    self.send("📡 Watchlist is empty.\nUse /watchlist add SYMBOL to add stocks.")
+                    return
+                msg = f"📡 <b>Watchlist</b> ({len(wl)} symbols)\n\n"
+                for s in sorted(wl):
+                    price = _get_market_data().get_current_price(s)
+                    price_str = f"${price:.2f}" if price else "N/A"
+                    msg += f"• <b>{s}</b>: {price_str}\n"
+                self.send(msg)
+            except Exception as e:
+                self.send(f"❌ Error: {e}")
+            return
+        
+        action = args[0].lower()
+        
+        if action == "add" and len(args) > 1:
+            symbol = _clean_symbol(args[1])
+            storage.add_to_watchlist(symbol)
+            self.send(f"✅ Added {symbol} to watchlist")
+        elif action == "remove" and len(args) > 1:
+            symbol = _clean_symbol(args[1])
+            storage.remove_from_watchlist(symbol)
+            self.send(f"🗑️ Removed {symbol} from watchlist")
+        else:
+            self.send("Usage: /watchlist [add|remove] SYMBOL")
+    
+    def _cmd_top(self, args):
+        """Show top signals from latest analysis."""
+        try:
+            Storage = _get_storage()
+            storage = Storage()
+            
+            from core.storage import get_week_id
+            week_id = get_week_id()
+            
+            results = storage.get_analysis_results(week_id)
+            
+            if not results:
+                self.send("📭 No analysis results. Run /weeklyrun first.")
+                return
+            
+            # Sort by score
+            scored = [r for r in results if r.get("score", 0) > 0]
+            scored.sort(key=lambda x: x.get("score", 0), reverse=True)
+            
+            msg = f"🏆 <b>Top Signals (Week {week_id})</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            for r in scored[:10]:
+                score = r.get("score", 0)
+                symbol = r.get("symbol", "?")
+                strategy = r.get("strategy", "")
+                
+                if score >= 4:
+                    emoji = "🔥"
+                elif score >= 3:
+                    emoji = "⭐"
+                else:
+                    emoji = "📊"
+                
+                msg += f"{emoji} <b>{symbol}</b> Score: {score}/5"
+                if strategy:
+                    msg += f" ({strategy})"
+                msg += "\n"
+            
+            if not scored:
+                msg += "No high-confidence signals this week."
+            
+            self.send(msg)
+            
+        except Exception as e:
+            self.send(f"❌ Error: {e}")
+    
+    def _cmd_sectors(self, args):
+        """Show sector momentum rankings."""
+        try:
+            import json
+            from core.storage import get_week_id
+            
+            week_id = get_week_id()
+            filepath = config.DATA_DIR / f"sector_momentum_{week_id}.json"
+            
+            if not filepath.exists():
+                self.send("📭 No sector data. Run /weeklyrun first.")
+                return
+            
+            with open(filepath) as f:
+                data = json.load(f)
+            
+            results = data.get("results", [])
+            if not results:
+                self.send("📭 No sector momentum data available.")
+                return
+            
+            msg = f"📊 <b>Sector Momentum</b>\n"
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            for r in results:
+                rank = r.get("momentum_rank", 0)
+                name = r.get("sector_name", r.get("symbol", "?"))
+                ret = r.get("return_1m", 0)
+                score = r.get("score", 0)
+                
+                if rank <= 3:
+                    emoji = "🟢"
+                elif rank >= len(results) - 2:
+                    emoji = "🔴"
+                else:
+                    emoji = "🟡"
+                
+                msg += f"{emoji} #{rank} <b>{name}</b>\n"
+                msg += f"   1M Return: {ret:+.1f}% | Score: {score}\n"
+            
             self.send(msg)
             
         except Exception as e:

@@ -26,23 +26,16 @@ def check_python_version():
 
 
 def check_numpy():
-    """Check numpy version (MUST be < 2.0)."""
+    """Check numpy is installed."""
     print("\n2. Checking numpy...")
     try:
         import numpy as np
         version = np.__version__
-        major = int(version.split('.')[0])
-        
-        if major >= 2:
-            print(f"   ✗ numpy {version} - VERSION 2.0+ NOT SUPPORTED!")
-            print(f"   Run: pip uninstall numpy -y && pip install numpy==1.26.4")
-            return False
-        
         print(f"   ✓ numpy {version}")
         return True
     except ImportError:
         print("   ✗ numpy not installed")
-        print("   Run: pip install numpy==1.26.4")
+        print("   Run: pip install numpy")
         return False
     except Exception as e:
         print(f"   ✗ numpy error: {e}")
@@ -65,53 +58,52 @@ def check_pandas():
         return False
 
 
-def check_yfinance():
-    """Check yfinance with proper session."""
-    print("\n4. Checking yfinance...")
+def check_market_data():
+    """Check Yahoo Finance API (direct REST, no crumb needed for prices)."""
+    print("\n4. Checking Yahoo Finance API...")
     try:
-        import yfinance as yf
-        print(f"   ✓ yfinance {yf.__version__}")
+        import requests as req
         
-        # Check if requests-cache is installed
-        try:
-            import requests_cache
-            print(f"   ✓ requests-cache installed")
-        except ImportError:
-            print(f"   ⚠ requests-cache not installed (recommended)")
-            print(f"     Run: pip install requests-cache")
-        
-        # Test with browser session
-        from core.market_data import get_current_price, get_history
+        session = req.Session()
+        session.headers["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         
         symbols = ['AAPL', 'MSFT', 'SPY']
         success = False
         
         for symbol in symbols:
             try:
-                price = get_current_price(symbol)
-                if price and price > 0:
-                    print(f"   ✓ {symbol}: ${price:.2f}")
-                    success = True
-                    break
+                resp = session.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                    params={"range": "1d", "interval": "5m"},
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    price = data.get("chart", {}).get("result", [{}])[0].get("meta", {}).get("regularMarketPrice")
+                    if price:
+                        print(f"   ✓ {symbol}: ${price:.2f}")
+                        success = True
+                        break
+                    else:
+                        print(f"   - {symbol}: No price in response")
                 else:
-                    print(f"   - {symbol}: No price data")
+                    print(f"   - {symbol}: HTTP {resp.status_code}")
             except Exception as e:
                 print(f"   - {symbol}: {str(e)[:40]}")
         
         if success:
-            print(f"   ✓ yfinance API working")
+            print(f"   ✓ Yahoo Finance API working (chart endpoint, no auth needed)")
             return True
         else:
-            print(f"   ⚠ yfinance not responding (may be rate limited)")
-            print(f"     Try: pip install --upgrade yfinance requests-cache")
+            print(f"   ⚠ Yahoo Finance not responding")
             return True  # Don't fail setup for temporary issues
         
     except ImportError as e:
         print(f"   ✗ Import error: {e}")
-        print("   Run: pip install yfinance>=0.2.54 requests-cache")
+        print("   Run: pip install requests pandas numpy")
         return False
     except Exception as e:
-        print(f"   ⚠ yfinance warning: {e}")
+        print(f"   ⚠ Yahoo Finance warning: {e}")
         return True
 
 
@@ -222,7 +214,7 @@ def main():
     results.append(("Python", check_python_version()))
     results.append(("numpy", check_numpy()))
     results.append(("pandas", check_pandas()))
-    results.append(("yfinance", check_yfinance()))
+    results.append(("Yahoo Finance", check_market_data()))
     results.append(("packages", check_other_packages()))
     results.append(("config", check_config()))
     results.append(("T212 API", check_t212_connection()))
@@ -243,9 +235,8 @@ def main():
         print("✓ All checks passed! Run: python main.py")
     else:
         print("✗ Some checks failed. Fix the issues above.")
-        print("\nQuick fix for numpy issue:")
-        print("  pip uninstall numpy pandas yfinance -y")
-        print("  pip install numpy==1.26.4 pandas==2.1.4 yfinance==0.2.40")
+        print("\nQuick fix:")
+        print("  pip install requests pandas numpy pytz python-dotenv")
     
     return 0 if all_ok else 1
 

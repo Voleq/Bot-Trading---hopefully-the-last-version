@@ -84,7 +84,12 @@ class WeekendAnalysisPipeline:
     
     def get_earnings_candidates(self) -> List[Dict]:
         """
-        Step 2: Get earnings for next week from FMP.
+        Step 2: Get earnings for next week.
+        
+        Sources (tried in order):
+        1. FMP /stable/earnings-calendar (new endpoint)
+        2. FMP /api/v3/earning_calendar (legacy endpoint)
+        3. Yahoo Finance earnings dates (fallback)
         
         Cross-check against Trading212 universe.
         Only keep stocks that are tradeable.
@@ -93,13 +98,8 @@ class WeekendAnalysisPipeline:
         logger.info("STEP 2: Getting Earnings Candidates")
         logger.info("=" * 60)
         
-        if not config.FMP_API_KEY:
-            logger.warning("FMP_API_KEY not set, skipping earnings")
-            return []
-        
         # Get next week's dates
         today = datetime.now()
-        # Find next Monday
         days_until_monday = (7 - today.weekday()) % 7
         if days_until_monday == 0:
             days_until_monday = 7
@@ -107,28 +107,26 @@ class WeekendAnalysisPipeline:
         next_monday = today + timedelta(days=days_until_monday)
         next_friday = next_monday + timedelta(days=4)
         
-        logger.info(f"Fetching earnings for {next_monday.strftime('%Y-%m-%d')} to {next_friday.strftime('%Y-%m-%d')}")
+        from_date = next_monday.strftime("%Y-%m-%d")
+        to_date = next_friday.strftime("%Y-%m-%d")
         
-        # Fetch from FMP
-        try:
-            url = "https://financialmodelingprep.com/api/v3/earning_calendar"
-            params = {
-                "from": next_monday.strftime("%Y-%m-%d"),
-                "to": next_friday.strftime("%Y-%m-%d"),
-                "apikey": config.FMP_API_KEY
-            }
-            
-            resp = requests.get(url, params=params, timeout=30)
-            if resp.status_code != 200:
-                logger.error(f"FMP API error: {resp.status_code}")
-                return []
-            
-            earnings_data = resp.json()
-            logger.info(f"FMP returned {len(earnings_data)} earnings")
-            
-        except Exception as e:
-            logger.error(f"FMP request failed: {e}")
+        logger.info(f"Fetching earnings for {from_date} to {to_date}")
+        
+        # Try FMP first
+        earnings_data = []
+        if config.FMP_API_KEY:
+            earnings_data = self._fetch_fmp_earnings(from_date, to_date)
+        
+        # Fallback to Yahoo Finance for top universe symbols
+        if not earnings_data:
+            logger.info("FMP unavailable, falling back to Yahoo Finance earnings")
+            earnings_data = self._fetch_yahoo_earnings(from_date, to_date)
+        
+        if not earnings_data:
+            logger.warning("No earnings data from any source")
             return []
+        
+        logger.info(f"Raw earnings data: {len(earnings_data)} entries")
         
         # Get universe symbols
         universe_symbols = set(s.upper() for s in self.storage.get_universe_symbols())
@@ -137,7 +135,7 @@ class WeekendAnalysisPipeline:
             logger.error("No universe loaded, run refresh_universe first")
             return []
         
-        # Filter to tradeable only with symbol validation
+        # Filter to tradeable only
         candidates = []
         skipped = {"invalid": 0, "not_tradeable": 0}
         
@@ -145,12 +143,10 @@ class WeekendAnalysisPipeline:
             raw_symbol = item.get("symbol", "")
             symbol = clean_symbol(raw_symbol)
             
-            # Skip invalid symbols
             if not symbol:
                 skipped["invalid"] += 1
                 continue
             
-            # Skip if not in Trading212 universe
             if symbol.upper() not in universe_symbols:
                 skipped["not_tradeable"] += 1
                 continue
@@ -158,9 +154,10 @@ class WeekendAnalysisPipeline:
             candidates.append({
                 "symbol": symbol,
                 "date": item.get("date"),
-                "time": item.get("time", "unknown"),  # bmo=before market, amc=after market
+                "time": item.get("time", "unknown"),
                 "eps_estimate": item.get("epsEstimated"),
                 "revenue_estimate": item.get("revenueEstimated"),
+                "source": item.get("source", "fmp"),
             })
         
         logger.info(f"Filtered to {len(candidates)} tradeable candidates")
@@ -176,6 +173,257 @@ class WeekendAnalysisPipeline:
         
         return candidates
     
+    def _fetch_fmp_earnings(self, from_date: str, to_date: str) -> List[Dict]:
+        """Fetch earnings from FMP. Tries stable endpoint, then v3 legacy."""
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        # Try 1: New stable endpoint
+        endpoints = [
+            ("https://financialmodelingprep.com/stable/earnings-calendar", {
+                "from": from_date,
+                "to": to_date,
+                "apikey": config.FMP_API_KEY,
+            }),
+            # Try 2: Legacy v3 endpoint
+            ("https://financialmodelingprep.com/api/v3/earning_calendar", {
+                "from": from_date,
+                "to": to_date,
+                "apikey": config.FMP_API_KEY,
+            }),
+        ]
+        
+        for url, params in endpoints:
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        logger.info(f"FMP returned {len(data)} earnings from {url.split('/')[-1]}")
+                        return data
+                    elif isinstance(data, dict) and "Error Message" in data:
+                        logger.warning(f"FMP error: {data['Error Message']}")
+                        continue
+                elif resp.status_code == 403:
+                    logger.warning(f"FMP 403 (may need paid plan) for {url.split('/')[-1]}")
+                    continue
+                else:
+                    logger.warning(f"FMP {resp.status_code} for {url.split('/')[-1]}")
+            except Exception as e:
+                logger.debug(f"FMP request failed: {e}")
+        
+        logger.warning("All FMP endpoints failed")
+        return []
+    
+    def _fetch_yahoo_earnings(self, from_date: str, to_date: str) -> List[Dict]:
+        """
+        Fallback: fetch ALL earnings for a date range from Yahoo Finance.
+        
+        Uses Yahoo's bulk earnings calendar endpoint which returns
+        all companies reporting on each day — no per-symbol limit.
+        """
+        import time as _time
+        
+        try:
+            from datetime import datetime as dt
+            target_start = dt.strptime(from_date, "%Y-%m-%d")
+            target_end = dt.strptime(to_date, "%Y-%m-%d")
+        except Exception:
+            return []
+        
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        })
+        
+        all_earnings = []
+        
+        # Method 1: Yahoo Finance screener API (bulk earnings by date)
+        # This endpoint returns up to 250 results per request, paginated
+        current_date = target_start
+        while current_date <= target_end:
+            date_str = current_date.strftime("%Y-%m-%d")
+            day_earnings = self._yahoo_earnings_for_date(session, date_str)
+            
+            if day_earnings:
+                all_earnings.extend(day_earnings)
+                logger.info(f"Yahoo earnings calendar: {len(day_earnings)} companies for {date_str}")
+            else:
+                logger.debug(f"Yahoo earnings calendar: 0 companies for {date_str}")
+            
+            current_date += timedelta(days=1)
+            _time.sleep(0.5)  # Be nice to Yahoo
+        
+        # Method 2 fallback: if screener returned nothing, try the finance/calendar endpoint
+        if not all_earnings:
+            logger.info("Yahoo screener returned nothing, trying calendar endpoint...")
+            all_earnings = self._yahoo_calendar_fallback(session, from_date, to_date)
+        
+        logger.info(f"Yahoo Finance found {len(all_earnings)} total earnings for {from_date} to {to_date}")
+        return all_earnings
+    
+    def _yahoo_earnings_for_date(self, session, date_str: str) -> List[Dict]:
+        """Fetch earnings for a single date using Yahoo's screener/calendar API."""
+        results = []
+        offset = 0
+        page_size = 250
+        
+        while True:
+            try:
+                # Yahoo Finance earnings calendar API
+                url = "https://finance.yahoo.com/calendar/earnings"
+                resp = session.get(url, params={
+                    "day": date_str,
+                    "offset": offset,
+                    "size": page_size,
+                }, timeout=15)
+                
+                if resp.status_code != 200:
+                    break
+                
+                # Try to extract JSON data from the page
+                text = resp.text
+                
+                # Look for the embedded JSON data in the page
+                import json
+                import re
+                
+                # Pattern 1: Look for stores data
+                match = re.search(r'"rows"\s*:\s*(\[.*?\])\s*,\s*"total"', text, re.DOTALL)
+                if match:
+                    try:
+                        rows = json.loads(match.group(1))
+                        for row in rows:
+                            ticker = row.get("ticker", "")
+                            if not ticker:
+                                # Try alternative field names
+                                ticker = row.get("symbol", "")
+                            
+                            if ticker:
+                                results.append({
+                                    "symbol": ticker,
+                                    "date": date_str,
+                                    "time": row.get("startdatetimetype", "unknown"),
+                                    "epsEstimated": row.get("epsestimate"),
+                                    "revenueEstimated": None,
+                                    "source": "yahoo_calendar",
+                                })
+                        
+                        # Check if there are more pages
+                        total_match = re.search(r'"total"\s*:\s*(\d+)', text)
+                        if total_match:
+                            total = int(total_match.group(1))
+                            if offset + page_size >= total:
+                                break
+                            offset += page_size
+                            continue
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Pattern 2: Try to find earnings data in script tags
+                pattern = r'<script[^>]*>.*?\"earningsCalendarData\".*?\"rows\":\s*(\[.*?\])'
+                match2 = re.search(pattern, text, re.DOTALL)
+                if match2:
+                    try:
+                        rows = json.loads(match2.group(1))
+                        for row in rows:
+                            ticker = row.get("ticker") or row.get("symbol", "")
+                            if ticker:
+                                results.append({
+                                    "symbol": ticker,
+                                    "date": date_str,
+                                    "time": row.get("startdatetimetype", "unknown"),
+                                    "epsEstimated": row.get("epsestimate"),
+                                    "revenueEstimated": None,
+                                    "source": "yahoo_calendar",
+                                })
+                    except json.JSONDecodeError:
+                        pass
+                
+                break  # No more pagination data found
+                
+            except Exception as e:
+                logger.debug(f"Yahoo calendar fetch error for {date_str}: {e}")
+                break
+        
+        return results
+    
+    def _yahoo_calendar_fallback(self, session, from_date: str, to_date: str) -> List[Dict]:
+        """
+        Last resort: use Yahoo's v1 finance screener API to get earnings.
+        This endpoint accepts date range and returns bulk results.
+        """
+        import json
+        results = []
+        
+        try:
+            # Try Yahoo screener with earnings filter
+            url = "https://query2.finance.yahoo.com/v1/finance/screener"
+            
+            payload = {
+                "size": 250,
+                "offset": 0,
+                "sortField": "intradaymarketcap",
+                "sortType": "DESC",
+                "quoteType": "EQUITY",
+                "query": {
+                    "operator": "AND",
+                    "operands": [
+                        {
+                            "operator": "eq",
+                            "operands": ["region", "us"]
+                        },
+                        {
+                            "operator": "BTWN",
+                            "operands": [
+                                "earnings_date",
+                                from_date,
+                                to_date,
+                            ]
+                        }
+                    ]
+                },
+            }
+            
+            resp = session.post(url, json=payload, timeout=15)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+                
+                for q in quotes:
+                    symbol = q.get("symbol", "")
+                    if symbol:
+                        # Extract earnings date from the quote
+                        earn_ts = q.get("earningsTimestamp")
+                        if earn_ts:
+                            from datetime import datetime as dt
+                            earn_date = dt.fromtimestamp(earn_ts).strftime("%Y-%m-%d")
+                        else:
+                            earn_date = from_date
+                        
+                        results.append({
+                            "symbol": symbol,
+                            "date": earn_date,
+                            "time": q.get("earningsTimestampStart", "unknown"),
+                            "epsEstimated": q.get("epsForward") or q.get("epsTrailingTwelveMonths"),
+                            "revenueEstimated": q.get("revenueEstimate"),
+                            "source": "yahoo_screener",
+                        })
+                
+                logger.info(f"Yahoo screener returned {len(results)} earnings results")
+            else:
+                logger.debug(f"Yahoo screener returned {resp.status_code}")
+                
+        except Exception as e:
+            logger.debug(f"Yahoo screener fallback error: {e}")
+        
+        return results
+
     # ==================== STEP 3: HISTORICAL ANALYSIS ====================
     
     def analyze_candidates(self, candidates: List[Dict] = None) -> List[Dict]:

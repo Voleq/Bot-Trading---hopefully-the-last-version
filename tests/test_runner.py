@@ -25,20 +25,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def _check_numpy():
     try:
         import numpy as np
-        if int(np.__version__.split('.')[0]) >= 2:
-            print("=" * 60)
-            print("ERROR: numpy 2.0+ is not supported!")
-            print("=" * 60)
-            print(f"Current version: {np.__version__}")
-            print()
-            print("Fix with:")
-            print("  pip uninstall numpy pandas yfinance -y")
-            print("  pip install numpy==1.26.4 pandas==2.1.4 yfinance==0.2.40")
-            print("=" * 60)
-            return False
         return True
     except ImportError:
         print("ERROR: numpy not installed")
+        print("Fix: pip install -r requirements.txt")
         return False
 
 if not _check_numpy():
@@ -419,34 +409,28 @@ class TestSuite:
         result = TestResult("Historical Analysis")
         
         try:
-            import yfinance as yf
+            from core import market_data
             import pandas as pd
             
             # Test with a known stock
             symbol = "AAPL"
-            ticker = yf.Ticker(symbol)
             
-            hist = ticker.history(period="2y")
+            hist = market_data.get_history(symbol, period="2y")
             
-            if len(hist) < 200:
-                result.fail(f"Insufficient history: {len(hist)} days")
+            if hist is None or len(hist) < 200:
+                result.fail(f"Insufficient history: {len(hist) if hist is not None else 0} days")
                 self.add_result(result)
                 return
             
             result.add_detail(f"History: {len(hist)} days")
             
-            # Test earnings dates (may fail without lxml)
+            # Test earnings dates
             try:
-                earnings = ticker.earnings_dates
+                earnings = market_data.get_earnings_dates(symbol)
                 if earnings is not None and not earnings.empty:
                     result.add_detail(f"Earnings dates: {len(earnings)}")
                 else:
                     result.add_detail("No earnings dates (may be normal)")
-            except ImportError as e:
-                if "lxml" in str(e):
-                    result.add_detail("Earnings dates: requires lxml (pip install lxml)")
-                else:
-                    result.add_detail(f"Earnings dates: {e}")
             except Exception as e:
                 result.add_detail(f"Earnings dates: skipped ({type(e).__name__})")
             
@@ -477,13 +461,12 @@ class TestSuite:
             result.add_detail(f"Min market cap: ${rules['min_market_cap']/1e6:.0f}M")
             
             # Test with a real stock
-            import yfinance as yf
+            from core import market_data
             
-            ticker = yf.Ticker("AAPL")
-            info = ticker.info
+            info = market_data.get_info("AAPL") or {}
             
-            vol = info.get("averageVolume", 0)
-            mkt_cap = info.get("marketCap", 0)
+            vol = info.get("averageVolume", 0) or 0
+            mkt_cap = info.get("marketCap", 0) or 0
             
             checks = []
             if vol >= rules["min_avg_volume"]:

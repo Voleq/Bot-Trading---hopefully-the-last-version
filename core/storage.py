@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
 import config
+from core.utils import NumpySafeEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class Storage:
         # Also save to JSON as backup
         filepath = self.data_dir / f"universe_{week_id}.json"
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, cls=NumpySafeEncoder, default=str)
         
         return True
     
@@ -161,7 +162,7 @@ class Storage:
         
         filepath = self.data_dir / f"earnings_{week_id}.json"
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, cls=NumpySafeEncoder, default=str)
         
         logger.info(f"Earnings candidates saved: {week_id} ({len(candidates)})")
         return True
@@ -209,7 +210,7 @@ class Storage:
         # Also save to JSON
         filepath = self.data_dir / f"analysis_{week_id}.json"
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, cls=NumpySafeEncoder, default=str)
         
         logger.info(f"Analysis results saved: {week_id} ({len(results)})")
         return True
@@ -262,7 +263,7 @@ class Storage:
         trades.append(trade)
         
         with open(filepath, 'w') as f:
-            json.dump(trades, f, indent=2)
+            json.dump(trades, f, indent=2, cls=NumpySafeEncoder, default=str)
         
         # Also save to MongoDB
         if self._has_mongo():
@@ -295,7 +296,7 @@ class Storage:
         }
         
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, cls=NumpySafeEncoder, default=str)
         
         return True
     
@@ -330,4 +331,66 @@ class Storage:
         logs.append(log_entry)
         
         with open(filepath, 'w') as f:
-            json.dump(logs, f, indent=2)
+            json.dump(logs, f, indent=2, cls=NumpySafeEncoder, default=str)
+    
+    # ==================== WATCHLIST ====================
+    
+    def get_watchlist(self) -> List[str]:
+        """Get user's watchlist."""
+        filepath = self.data_dir / "watchlist.json"
+        if filepath.exists():
+            with open(filepath) as f:
+                return json.load(f)
+        return []
+    
+    def add_to_watchlist(self, symbol: str):
+        """Add symbol to watchlist."""
+        wl = self.get_watchlist()
+        symbol = symbol.upper()
+        if symbol not in wl:
+            wl.append(symbol)
+            filepath = self.data_dir / "watchlist.json"
+            with open(filepath, 'w') as f:
+                json.dump(wl, f, indent=2)
+    
+    def remove_from_watchlist(self, symbol: str):
+        """Remove symbol from watchlist."""
+        wl = self.get_watchlist()
+        symbol = symbol.upper()
+        if symbol in wl:
+            wl.remove(symbol)
+            filepath = self.data_dir / "watchlist.json"
+            with open(filepath, 'w') as f:
+                json.dump(wl, f, indent=2)
+    
+    # ==================== ANALYSIS RESULTS ====================
+    
+    def get_analysis_results(self, week_id: str = None) -> List[Dict]:
+        """Get analysis results for a week."""
+        week_id = week_id or get_week_id()
+        
+        # Try MongoDB first
+        if self._has_mongo():
+            try:
+                doc = self.db["analysis"].find_one({"week_id": week_id})
+                if doc and "results" in doc:
+                    return doc["results"]
+            except Exception:
+                pass
+        
+        # Try JSON files from various strategies
+        all_results = []
+        for pattern in ["sector_momentum_", "mean_reversion_", "breakout_", "gap_fade_"]:
+            filepath = self.data_dir / f"{pattern}{week_id}.json"
+            if filepath.exists():
+                try:
+                    with open(filepath) as f:
+                        data = json.load(f)
+                    results = data.get("results", [])
+                    for r in results:
+                        r["strategy"] = pattern.rstrip("_")
+                    all_results.extend(results)
+                except Exception:
+                    pass
+        
+        return all_results

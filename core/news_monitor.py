@@ -7,7 +7,7 @@ Monitors news during market hours for:
 3. Market-moving events
 
 Sources:
-- yfinance news (free)
+- Yahoo Finance news (via REST API)
 - FMP news API (free tier)
 
 Runs continuously during market hours.
@@ -46,6 +46,8 @@ class NewsItem:
     url: str
     impact: NewsImpact
     keywords: List[str]
+    sentiment_score: float = 0.0  # -1.0 to 1.0
+    summary: str = ""  # Interpreted meaning
 
 
 class NewsMonitor:
@@ -119,10 +121,10 @@ class NewsMonitor:
     
     # ==================== NEWS FETCHING ====================
     
-    def check_news(self, symbol: str) -> List[NewsItem]:
+    def check_news(self, symbol: str, max_items: int = 20, store: bool = True) -> List[NewsItem]:
         """
         Check for recent news on a symbol.
-        Returns news from last hour.
+        Fetches up to max_items, classifies, scores, and stores them.
         """
         symbol = symbol.upper()
         news_items = []
@@ -134,20 +136,20 @@ class NewsMonitor:
         
         self._last_check[symbol] = datetime.now()
         
-        # Get from yfinance
-        yf_news = self._get_yfinance_news(symbol)
+        # Get from Yahoo Finance API (primary, no auth needed)
+        yf_news = self._get_yfinance_news(symbol, max_items=max_items)
         news_items.extend(yf_news)
         
-        # Get from FMP if configured
+        # Get from FMP if configured (additional coverage)
         if config.FMP_API_KEY:
-            fmp_news = self._get_fmp_news(symbol)
+            fmp_news = self._get_fmp_news(symbol, max_items=max_items)
             news_items.extend(fmp_news)
         
-        # Filter to recent only (last 2 hours)
-        cutoff = datetime.now() - timedelta(hours=2)
+        # Filter to recent only (last 24 hours for full reports, 2 hours for alerts)
+        cutoff = datetime.now() - timedelta(hours=24)
         recent = [n for n in news_items if n.timestamp > cutoff]
         
-        # Deduplicate
+        # Deduplicate by headline similarity
         unique = []
         seen_headlines = set()
         for n in recent:
@@ -156,20 +158,29 @@ class NewsMonitor:
                 seen_headlines.add(headline_key)
                 unique.append(n)
         
+        # Sort by timestamp (newest first)
+        unique.sort(key=lambda x: x.timestamp, reverse=True)
+        
         # Cache
         self._news_cache[symbol] = unique
         
+        # Store to disk/MongoDB
+        if store and unique:
+            self._store_news(symbol, unique)
+        
         return unique
     
-    def _get_yfinance_news(self, symbol: str) -> List[NewsItem]:
-        """Get news from yfinance."""
+    def _get_yfinance_news(self, symbol: str, max_items: int = 20) -> List[NewsItem]:
+        """Get news from Yahoo Finance API."""
         news_items = []
         
         try:
-            raw_news = market_data.get_news(symbol, max_items=10)
+            raw_news = market_data.get_news(symbol, max_items=max_items)
             
             for item in raw_news:
                 headline = item.get("title", "")
+                if not headline:
+                    continue
                 
                 # Skip if already seen
                 news_id = f"{symbol}:{headline[:30]}"
@@ -183,9 +194,11 @@ class NewsMonitor:
                 else:
                     timestamp = datetime.now()
                 
-                # Classify impact
+                # Classify impact and score
                 impact = self._classify_impact(headline)
                 keywords = self._extract_keywords(headline)
+                score = self._sentiment_score(headline)
+                summary = self._interpret_headline(headline, symbol)
                 
                 news_items.append(NewsItem(
                     symbol=symbol,
@@ -194,70 +207,87 @@ class NewsMonitor:
                     timestamp=timestamp,
                     url=item.get("link", ""),
                     impact=impact,
-                    keywords=keywords
+                    keywords=keywords,
+                    sentiment_score=score,
+                    summary=summary,
                 ))
                 
                 self._seen_news.add(news_id)
                 
         except Exception as e:
-            logger.debug(f"yfinance news error for {symbol}: {e}")
+            logger.debug(f"Yahoo news error for {symbol}: {e}")
         
         return news_items
     
-    def _get_fmp_news(self, symbol: str) -> List[NewsItem]:
-        """Get news from FMP API."""
+    def _get_fmp_news(self, symbol: str, max_items: int = 20) -> List[NewsItem]:
+        """Get news from FMP API. Tries stable endpoint, then v3."""
         news_items = []
         
-        try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news"
-            params = {
-                "tickers": symbol,
-                "limit": 10,
-                "apikey": config.FMP_API_KEY
-            }
-            
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code != 200:
-                return []
-            
-            data = resp.json()
-            
-            for item in data:
-                headline = item.get("title", "")
+        endpoints = [
+            f"https://financialmodelingprep.com/stable/news/stock-news",
+            f"https://financialmodelingprep.com/api/v3/stock_news",
+        ]
+        
+        for url in endpoints:
+            try:
+                params = {
+                    "tickers": symbol,
+                    "limit": max_items,
+                    "apikey": config.FMP_API_KEY,
+                }
                 
-                # Skip if seen
-                news_id = f"{symbol}:{headline[:30]}"
-                if news_id in self._seen_news:
+                resp = requests.get(url, params=params, timeout=10)
+                if resp.status_code != 200:
                     continue
                 
-                # Parse timestamp
-                pub_date = item.get("publishedDate", "")
-                try:
-                    timestamp = datetime.fromisoformat(pub_date.replace("Z", ""))
-                except:
-                    timestamp = datetime.now()
+                data = resp.json()
+                if not isinstance(data, list):
+                    continue
                 
-                impact = self._classify_impact(headline)
-                keywords = self._extract_keywords(headline)
+                for item in data:
+                    headline = item.get("title", "")
+                    if not headline:
+                        continue
+                    
+                    news_id = f"{symbol}:{headline[:30]}"
+                    if news_id in self._seen_news:
+                        continue
+                    
+                    # Parse timestamp
+                    pub_date = item.get("publishedDate", "")
+                    try:
+                        timestamp = datetime.fromisoformat(pub_date.replace("Z", "").replace(" ", "T"))
+                    except Exception:
+                        timestamp = datetime.now()
+                    
+                    impact = self._classify_impact(headline)
+                    keywords = self._extract_keywords(headline)
+                    score = self._sentiment_score(headline)
+                    summary = self._interpret_headline(headline, symbol)
+                    
+                    news_items.append(NewsItem(
+                        symbol=symbol,
+                        headline=headline,
+                        source=item.get("site", "FMP"),
+                        timestamp=timestamp,
+                        url=item.get("url", ""),
+                        impact=impact,
+                        keywords=keywords,
+                        sentiment_score=score,
+                        summary=summary,
+                    ))
+                    
+                    self._seen_news.add(news_id)
                 
-                news_items.append(NewsItem(
-                    symbol=symbol,
-                    headline=headline,
-                    source=item.get("site", "FMP"),
-                    timestamp=timestamp,
-                    url=item.get("url", ""),
-                    impact=impact,
-                    keywords=keywords
-                ))
-                
-                self._seen_news.add(news_id)
-                
-        except Exception as e:
-            logger.debug(f"FMP news error for {symbol}: {e}")
+                if news_items:
+                    break  # Got data from this endpoint
+                    
+            except Exception as e:
+                logger.debug(f"FMP news error for {symbol}: {e}")
         
         return news_items
     
-    # ==================== NEWS CLASSIFICATION ====================
+    # ==================== NEWS CLASSIFICATION & SCORING ====================
     
     def _classify_impact(self, headline: str) -> NewsImpact:
         """Classify news impact as positive/negative/neutral."""
@@ -275,6 +305,89 @@ class NewsMonitor:
         else:
             return NewsImpact.UNKNOWN
     
+    def _sentiment_score(self, headline: str) -> float:
+        """
+        Compute numeric sentiment score from -1.0 (very negative) to 1.0 (very positive).
+        Uses weighted keyword matching with intensity modifiers.
+        """
+        headline_lower = headline.lower()
+        
+        # Weighted positive terms
+        strong_pos = ["beats", "exceeds", "soars", "surges", "record", "breakthrough", 
+                      "approval", "upgraded", "skyrockets", "blowout"]
+        mild_pos = ["raises", "wins", "awarded", "rallies", "partnership",
+                    "innovation", "outperform", "dividend", "buyback", "growth"]
+        
+        # Weighted negative terms  
+        strong_neg = ["crashes", "plunges", "fraud", "bankruptcy", "tumbles",
+                      "rejected", "probe", "investigation", "recall", "warning"]
+        mild_neg = ["misses", "disappoints", "lowers", "downgraded", "lawsuit",
+                    "layoffs", "cuts", "loss", "decline", "weak", "underperform"]
+        
+        score = 0.0
+        for kw in strong_pos:
+            if kw in headline_lower:
+                score += 0.4
+        for kw in mild_pos:
+            if kw in headline_lower:
+                score += 0.2
+        for kw in strong_neg:
+            if kw in headline_lower:
+                score -= 0.4
+        for kw in mild_neg:
+            if kw in headline_lower:
+                score -= 0.2
+        
+        # Clamp to [-1.0, 1.0]
+        return max(-1.0, min(1.0, score))
+    
+    def _interpret_headline(self, headline: str, symbol: str) -> str:
+        """
+        Generate a brief interpretation of what the headline means for trading.
+        Rule-based interpretation (no LLM needed).
+        """
+        hl = headline.lower()
+        
+        # Earnings related
+        if any(w in hl for w in ["beats", "exceeds", "tops estimates"]):
+            return f"{symbol} reported better-than-expected results. Bullish signal."
+        if any(w in hl for w in ["misses", "disappoints", "falls short"]):
+            return f"{symbol} missed expectations. Watch for post-earnings drift lower."
+        if any(w in hl for w in ["raises guidance", "raises outlook"]):
+            return f"{symbol} raised forward guidance. Strong bullish catalyst."
+        if any(w in hl for w in ["lowers guidance", "cuts outlook", "warns"]):
+            return f"{symbol} lowered guidance. Bearish — expect selling pressure."
+        
+        # Analyst actions
+        if "upgraded" in hl or "upgrade" in hl:
+            return f"Analyst upgrade for {symbol}. Positive catalyst for price."
+        if "downgraded" in hl or "downgrade" in hl:
+            return f"Analyst downgrade for {symbol}. May trigger selling."
+        if "price target" in hl and ("raises" in hl or "increased" in hl):
+            return f"Raised price target for {symbol}. Bullish signal."
+        
+        # Corporate actions
+        if any(w in hl for w in ["acquisition", "acquires", "merger", "buyout"]):
+            return f"M&A activity involving {symbol}. High volatility expected."
+        if any(w in hl for w in ["dividend", "buyback", "repurchase"]):
+            return f"Shareholder-friendly action by {symbol}. Generally positive."
+        if any(w in hl for w in ["layoffs", "restructuring", "cost cutting"]):
+            return f"{symbol} restructuring. Short-term negative, may be long-term positive."
+        
+        # Regulatory
+        if any(w in hl for w in ["fda", "approval", "approved"]):
+            return f"Regulatory approval for {symbol}. Major positive catalyst."
+        if any(w in hl for w in ["sec", "investigation", "probe", "lawsuit"]):
+            return f"Legal/regulatory risk for {symbol}. Monitor closely."
+        
+        # Market sentiment
+        if any(w in hl for w in ["record", "all-time high", "new high"]):
+            return f"{symbol} hitting new highs. Momentum continues."
+        if any(w in hl for w in ["crash", "plunge", "sell-off"]):
+            return f"Sharp decline in {symbol}. Assess if dip-buy or avoid."
+        
+        return f"General news for {symbol}. Monitor for follow-up developments."
+    
     def _extract_keywords(self, headline: str) -> List[str]:
         """Extract material keywords from headline."""
         headline_lower = headline.lower()
@@ -288,15 +401,141 @@ class NewsMonitor:
     
     def is_material_news(self, news: NewsItem) -> bool:
         """Check if news is material (could affect position)."""
-        # Has material keywords
         if news.keywords:
             return True
-        
-        # Strong sentiment
         if news.impact in [NewsImpact.POSITIVE, NewsImpact.NEGATIVE]:
             return True
-        
+        if abs(news.sentiment_score) >= 0.4:
+            return True
         return False
+    
+    # ==================== NEWS STORAGE ====================
+    
+    def _store_news(self, symbol: str, news_items: List[NewsItem]):
+        """Store news to JSON and MongoDB (if available)."""
+        import json
+        from core.utils import NumpySafeEncoder
+        
+        records = []
+        for n in news_items:
+            records.append({
+                "symbol": n.symbol,
+                "headline": n.headline,
+                "source": n.source,
+                "timestamp": n.timestamp.isoformat(),
+                "url": n.url,
+                "impact": n.impact.value,
+                "sentiment_score": n.sentiment_score,
+                "keywords": n.keywords,
+                "summary": n.summary,
+                "stored_at": datetime.now().isoformat(),
+            })
+        
+        # Save to JSON
+        try:
+            filepath = config.DATA_DIR / f"news_{symbol}_{datetime.now().strftime('%Y%m%d')}.json"
+            
+            # Append to existing file if present
+            existing = []
+            if filepath.exists():
+                with open(filepath) as f:
+                    existing = json.load(f)
+            
+            # Deduplicate by headline
+            existing_headlines = {r["headline"][:50] for r in existing}
+            new_records = [r for r in records if r["headline"][:50] not in existing_headlines]
+            
+            if new_records:
+                all_records = existing + new_records
+                with open(filepath, 'w') as f:
+                    json.dump(all_records, f, indent=2, cls=NumpySafeEncoder, default=str)
+                logger.debug(f"Stored {len(new_records)} news items for {symbol}")
+        except Exception as e:
+            logger.debug(f"News storage error: {e}")
+        
+        # Store to MongoDB if available
+        try:
+            from core.storage import Storage
+            storage = Storage()
+            if storage._has_mongo():
+                for r in records:
+                    storage.db["news"].update_one(
+                        {"symbol": r["symbol"], "headline": r["headline"][:100]},
+                        {"$set": r},
+                        upsert=True
+                    )
+        except Exception:
+            pass
+    
+    # ==================== NEWS REPORTS ====================
+    
+    def get_full_news_report(self, symbol: str) -> Dict:
+        """
+        Get comprehensive news report for a symbol.
+        Returns: headlines, aggregate sentiment, interpretation, and trading signal.
+        """
+        news = self.check_news(symbol, max_items=20, store=True)
+        
+        if not news:
+            return {
+                "symbol": symbol,
+                "count": 0,
+                "sentiment": 0.0,
+                "signal": "NO_DATA",
+                "headlines": [],
+                "interpretation": f"No recent news found for {symbol}.",
+            }
+        
+        # Aggregate sentiment
+        scores = [n.sentiment_score for n in news]
+        avg_sentiment = sum(scores) / len(scores) if scores else 0
+        
+        pos_count = sum(1 for n in news if n.impact == NewsImpact.POSITIVE)
+        neg_count = sum(1 for n in news if n.impact == NewsImpact.NEGATIVE)
+        
+        # Determine signal
+        if avg_sentiment > 0.3 and pos_count > neg_count * 2:
+            signal = "BULLISH"
+        elif avg_sentiment < -0.3 and neg_count > pos_count * 2:
+            signal = "BEARISH"
+        elif abs(avg_sentiment) < 0.1:
+            signal = "NEUTRAL"
+        else:
+            signal = "MIXED"
+        
+        # Build interpretation
+        lines = []
+        lines.append(f"📊 {len(news)} headlines analyzed for {symbol}")
+        lines.append(f"Sentiment: {avg_sentiment:+.2f} ({signal})")
+        lines.append(f"Positive: {pos_count} | Negative: {neg_count} | Neutral: {len(news) - pos_count - neg_count}")
+        
+        # Top 3 most impactful
+        material = [n for n in news if self.is_material_news(n)]
+        if material:
+            lines.append("\nKey headlines:")
+            for n in material[:3]:
+                lines.append(f"• {n.summary}")
+        
+        return {
+            "symbol": symbol,
+            "count": len(news),
+            "sentiment": round(avg_sentiment, 3),
+            "signal": signal,
+            "positive": pos_count,
+            "negative": neg_count,
+            "headlines": [
+                {
+                    "title": n.headline,
+                    "source": n.source,
+                    "score": n.sentiment_score,
+                    "impact": n.impact.value,
+                    "summary": n.summary,
+                    "time": n.timestamp.strftime("%Y-%m-%d %H:%M"),
+                }
+                for n in news
+            ],
+            "interpretation": "\n".join(lines),
+        }
     
     # ==================== CONTINUOUS MONITORING ====================
     
